@@ -1,11 +1,29 @@
 const PacketByPacket = require('../p-by-p')
+const readline = require('readline')
 
-const pbyp = PacketByPacket('./malformat.pcap')
-pbyp.on('end', () => console.log('--- read ended'))
-pbyp.on('packet', data => console.log(data))
+let receivedPacket = 0
+const pbyp = PacketByPacket('./sample.pcap')
+pbyp.on('end', (result) => console.log('--- read ended. Result:', result))
+pbyp.on('packet', p => {
+  console.log('got packet:', p)
+  receivedPacket++
+  if (receivedPacket % 15 === 0) {
+    pbyp.pause()
+    const rl = readline.createInterface({
+      input: process.stdin,
+      output: process.stdout
+    })
+    rl.question(`\nGot ${receivedPacket} packets already, do you want to continue? Enter to resume`, (answer) => {
+      pbyp.resume()
+      rl.close()
+    })
+  }
+})
+pbyp.on('globalHeader', gh => {
+  console.log('GlobalHeader:', gh)
+})
 pbyp.on('error', err => console.log(`ERROR: ${err}`))
 
-//pbyp.resume()
 setTimeout(() => {
   pbyp.resume()
-}, 1000)
+}, 100)
