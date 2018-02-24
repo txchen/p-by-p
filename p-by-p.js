@@ -4,123 +4,152 @@ const path = require('path')
 const fs = require('fs')
 const EventEmitter = require('events').EventEmitter
 
-const packetByPacket = filePath => {
-  const pbyp = Object.create(packetByPacket.prototype)
-  EventEmitter.call(pbyp)
+var GLOBAL_HEADER_LENGTH = 24 // bytes
+var PACKET_HEADER_LENGTH = 16 // bytes
 
-  pbyp._lines = []
-  pbyp._lineFragment = ''
-  pbyp._paused = true
-  pbyp._end = false
-  pbyp._ended = false
-  pbyp._filepath = filePath
-  pbyp._decoder = new StringDecoder('utf8')
+let pbypProto = {
+  _init () {
+    const readStream = this._filepath instanceof stream.Readable
+      ? this._filepath
+      : fs.createReadStream(this._filepath)
 
-  setImmediate(() => {
-    pbyp._init()
-  })
-  return pbyp
-}
+    readStream.pause()
 
-packetByPacket.prototype = Object.create(EventEmitter.prototype)
-
-packetByPacket.prototype._init = function () {
-  const readStream = this._filepath instanceof stream.Readable
-    ? this._filepath
-    : fs.createReadStream(this._filepath)
-
-  readStream.on('error', err => {
-    this.emit('error', err)
-  })
-
-  readStream.on('open', () => {
-    this.emit('open')
-  })
-
-  readStream.on('end', () => {
-    this._end = true
-    setImmediate(() => {
-      this._nextLine()
+    readStream.on('error', err => {
+      this._errored = true
+      this.emit('error', err)
+      this.close()
     })
-  })
 
-  readStream.on('data', (data) => {
-    this._readStream.pause()
-    let dataAsString = data
-    if (data instanceof Buffer) {
-      dataAsString = this._decoder.write(data)
-    }
-    this._lines = this._lines.concat(dataAsString.split(/(?:\n|\r\n|\r)/g))
-
-    this._lines[0] = this._lineFragment + this._lines[0]
-    this._lineFragment = this._lines.pop() || ''
-
-    setImmediate(() => {
-      this._nextLine()
+    readStream.on('open', () => {
+      this.emit('open')
     })
-  })
 
-  this._readStream = readStream
-}
+    readStream.on('end', () => {
+      this._ending = true
+      setImmediate(() => {
+        this._nextLine()
+      })
+    })
 
-packetByPacket.prototype._nextLine = function () {
-  if (this._paused) {
-    return
-  }
-
-  if (this._lines.length === 0) {
-    if (this._end) {
-      if (this._lineFragment) {
-        this.emit('packet', this._lineFragment)
-        this._lineFragment = ''
+    readStream.on('data', data => {
+      this._readStream.pause()
+      if (this._errored) {
+        return
       }
+      this._appendBuffer(data)
+      let dataAsString = data
+      if (data instanceof Buffer) {
+        dataAsString = this._decoder.write(data)
+      }
+      this._lines = this._lines.concat(dataAsString.split(/(?:\n|\r\n|\r)/g))
+
+      this._lines[0] = this._lineFragment + this._lines[0]
+      this._lineFragment = this._lines.pop() || ''
+
+      setImmediate(() => {
+        this._nextLine()
+      })
+    })
+
+    this._readStream = readStream
+  },
+
+  _nextLine () {
+    if (this._paused) {
+      return
+    }
+
+    if (this._lines.length === 0) {
+      if (this._ending) {
+        if (this._lineFragment) {
+          this.emit('packet', this._lineFragment)
+          this._lineFragment = ''
+        }
+        if (!this._paused) {
+          this._end()
+        }
+      } else {
+        this._readStream.resume()
+      }
+      return
+    }
+
+    line = this._lines.shift()
+
+    if (!this._skipEmptyLines || line.length > 0) {
+      this.emit('packet', line)
+    }
+
+    setImmediate(() => {
       if (!this._paused) {
-        this.end()
+        this._nextLine()
       }
+    })
+  },
+
+  _end () {
+    if (!this._ended) {
+      this._ended = true
+      this.emit('end')
+    }
+  },
+
+  _appendBuffer (data) {
+    if (data === null || data === undefined) {
+      return
+    }
+
+    if (this._buffer === null) {
+      this._buffer = data
     } else {
-      this._readStream.resume()
+      const extendedBuffer = new Buffer(this._buffer.length + data.length)
+      this._buffer.copy(extendedBuffer)
+      data.copy(extendedBuffer, this._buffer.length)
+      this._buffer = extendedBuffer
     }
-    return
-  }
+  },
 
-  line = this._lines.shift()
-
-  if (!this._skipEmptyLines || line.length > 0) {
-    this.emit('packet', line)
-  }
-
-  setImmediate(() => {
-    if (!this._paused) {
+  resume () {
+    this._paused = false
+    setImmediate(() => {
       this._nextLine()
-    }
-  })
-}
+    })
+  },
 
-packetByPacket.prototype.end = function () {
-  if (!this._ended) {
-    this._ended = true
-    this.emit('end')
+  pause () {
+    this._paused = true
+  },
+
+  close () {
+    this._readStream.destroy()
+    this._ending = true
+
+    setImmediate(() => {
+      this._nextLine()
+    })
   }
 }
 
-packetByPacket.prototype.resume = function () {
-  this._paused = false
+pbypProto = Object.assign(pbypProto, EventEmitter.prototype)
+
+const packetByPacket = filePath => {
+  const self = Object.create(pbypProto)
+
+  self._lines = []
+  self._lineFragment = ''
+  self._paused = true
+  self._ending = false
+  self._ended = false
+  self._filepath = filePath
+  self._buffer = null
+  self._errored = false
+  self._decoder = new StringDecoder('utf8')
+
   setImmediate(() => {
-    this._nextLine()
+    self._init()
   })
-}
-
-packetByPacket.prototype.pause = function () {
-  this._paused = true
-}
-
-packetByPacket.prototype.close = function () {
-  this._readStream.destroy()
-  this._end = true
-
-  setImmediate(() => {
-    this._nextLine()
-  })
+  return self
 }
 
 module.exports = packetByPacket
