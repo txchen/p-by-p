@@ -1,0 +1,26 @@
+{
+  "name": "p-by-p",
+  "version": "0.1.0",
+  "author": "Tianxiang Chen",
+  "description": "Packet-By-Packet, a pcap reader inspired by line-by-line and pcap-reader.",
+  "keywords": [
+    "packet",
+    "pcap",
+    "reader"
+  ],
+  "homepage": "https://github.com/txchen/p-by-p",
+  "repository": {
+    "type": "git",
+    "url": "git@github.com:txchen/p-by-p.git"
+  },
+  "main": "p-by-p.js",
+  "dependencies": {},
+  "devDependencies": {
+  },
+  "scripts": {
+  },
+  "engines": {
+    "node": ">=9.0.0"
+  },
+  "license": "MIT"
+}
